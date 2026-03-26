@@ -23,7 +23,6 @@ export const HeaderLogo: React.FC = () => {
       >
         <Avatar
           sx={{ width: 40, height: 40, mx: 1 }}
-          variant="square"
           src="./static/logo192.png"
           alt={`${setting.productName} logo`}
         />
