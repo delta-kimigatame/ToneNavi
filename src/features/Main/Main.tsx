@@ -29,6 +29,27 @@ interface RecordStats {
 }
 
 /**
+ * PCM データから DC オフセットを除去し、ピーク値で [-1, 1] に正規化する。
+ * ピーク値が 0 の場合（無音）はゼロ埋めした配列をそのまま返す。
+ * @param data - 録音済み PCM データ (44100Hz)
+ * @returns DC オフセット除去・正規化済みの Float64Array
+ */
+const removeDcAndNormalize = (data: Float64Array): Float64Array => {
+  // DC オフセット（平均値）を算出
+  const mean = data.reduce((sum, v) => sum + v, 0) / data.length;
+
+  // DC オフセット除去後のピーク絶対値を算出
+  const peak = data.reduce((max, v) => Math.max(max, Math.abs(v - mean)), 0);
+
+  if (peak === 0) {
+    // 無音の場合はゼロ埋めのまま返す
+    return new Float64Array(data.length);
+  }
+
+  return data.map((v) => (v - mean) / peak);
+};
+
+/**
  * Float64Array から簡易統計情報を算出する
  * @param data - 録音済み PCM データ (44100Hz)
  * @param sampleRate - サンプリングレート (Hz)
@@ -55,21 +76,26 @@ const calcStats = (data: Float64Array, sampleRate: number): RecordStats => {
   };
 };
 
+/** 歌声の F0 として有効とみなす周波数範囲 (Hz) */
+const F0_MIN_HZ = 80;
+const F0_MAX_HZ = 1000;
+
 /**
- * Harvest の f0 列から有声フレーム（f0 > 0）の平均周波数を算出する
+ * Harvest の f0 列から歌声の有効フレーム（80〜1000 Hz）の平均周波数を算出する。
+ * 範囲外の値（無音の 0 Hz や解析失敗フレームを含む）は外れ値として除外する。
+ * 有効フレーム数が全フレームの半数未満の場合は異常値とみなし 0 を返す。
  * @param f0 - Harvest が返す基本周波数列
- * @returns 有声フレームの平均周波数 (Hz)。有声フレームがない場合は 0
+ * @returns 有効フレームの平均周波数 (Hz)。有効フレームが不十分な場合は 0
  */
 const calcMeanF0 = (f0: Float64Array): number => {
-  let sum = 0;
-  let count = 0;
-  for (let i = 0; i < f0.length; i++) {
-    if (f0[i] > 0) {
-      sum += f0[i];
-      count++;
-    }
-  }
-  return count > 0 ? sum / count : 0;
+  const { sum, count } = f0.reduce(
+    (acc, v) =>
+      v >= F0_MIN_HZ && v <= F0_MAX_HZ
+        ? { sum: acc.sum + v, count: acc.count + 1 }
+        : acc,
+    { sum: 0, count: 0 },
+  );
+  return count >= f0.length / 2 ? sum / count : 0;
 };
 
 /**
@@ -103,7 +129,8 @@ export const Main: React.FC = () => {
 
   /** 録音成功時のハンドラ */
   const handleRecorded = React.useCallback((recordedData: Float64Array) => {
-    setData(recordedData);
+    const processed = removeDcAndNormalize(recordedData);
+    setData(processed);
     setRecordLog({ success: true });
   }, []);
 
@@ -189,6 +216,13 @@ export const Main: React.FC = () => {
           </Typography>
           <Typography>です。</Typography>
         </Box>
+      )}
+
+      {/* 分析失敗メッセージ */}
+      {meanF0 !== null && meanF0 === 0 && (
+        <Typography variant="body2" color="error">
+          分析に十分な声が検出されませんでした。もう1度お試しください。
+        </Typography>
       )}
 
       {/* 実行ログアコーディオン */}
